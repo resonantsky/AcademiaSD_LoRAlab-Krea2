@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
 
-# Instalador Venv Krea-2 Trainer para Linux (NVIDIA GPU)
+# Krea-2 Trainer Venv Installer for Linux (AMD GPU)
 
 BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PYTHON_EXE=""
 
 echo "========================================================"
-echo "   INSTALADOR KREA-2 LORA TRAINER (LINUX)"
-echo "   Entorno Python + PyTorch CUDA"
+echo "   KREA-2 LORA TRAINER INSTALLER (LINUX)"
+echo "   Python + PyTorch ROCm Environment"
 echo "========================================================"
 echo ""
 
-# 1. Comprobar Python 3 en el sistema
+# 1. Check Python 3 on the system
 if command -v python3.13 &>/dev/null; then
     PYTHON_EXE="python3.13"
 elif command -v python3.12 &>/dev/null; then
@@ -23,74 +23,102 @@ elif command -v python3 &>/dev/null; then
 fi
 
 if [ -n "$PYTHON_EXE" ]; then
-    echo "[OK] Python detectado: $($PYTHON_EXE --version)"
+    echo "[OK] Python detected: $($PYTHON_EXE --version)"
 else
-    echo "[ERROR] Python 3 no está instalado en el sistema."
-    echo "Por favor instálelo usando su gestor de paquetes (ej: sudo apt install python3 python3-venv python3-pip)"
+    echo "[ERROR] Python 3 is not installed on the system."
+    echo "Please install it using your package manager (e.g., sudo apt install python3 python3-venv python3-pip)"
     exit 1
 fi
 
-# 2. Comprobar módulo venv
+# 2. Check venv module
 $PYTHON_EXE -m venv --help &>/dev/null
 if [ $? -ne 0 ]; then
-    echo "[ERROR] El módulo venv de Python no está disponible."
-    echo "En Ubuntu/Debian, instálelo con: sudo apt install python3-venv"
+    echo "[ERROR] Python venv module is not available."
+    echo "Install Python first!"
     exit 1
 fi
 
-# 3. Comprobar GPU NVIDIA
-echo "[INFO] Comprobando drivers NVIDIA..."
-if command -v nvidia-smi &>/dev/null; then
-    echo "[OK] nvidia-smi detectado:"
-    nvidia-smi --query-gpu=name,driver_version --format=csv,noheader
+# 3. Check AMD GPU
+echo "[INFO] Checking AMD ROCm drivers..."
+if command -v rocm-smi &>/dev/null; then
+    echo "[OK] rocm-smi detected:"
+    rocm-smi --showdriverversion --showproductname
 else
-    echo "[ADVERTENCIA] nvidia-smi no encontrado. Asegúrese de tener los controladores NVIDIA instalados."
+    echo "[WARNING] rocm-smi not found. Make sure you have AMD ROCm drivers installed."
 fi
 
-# 4. Crear venv limpio
+# 4. Create clean venv
 VENV_DIR="$BASE_DIR/venv"
 if [ -d "$VENV_DIR" ]; then
-    echo "[INFO] Eliminando entorno virtual anterior..."
+    echo "[INFO] Removing previous virtual environment..."
     rm -rf "$VENV_DIR"
 fi
 
-echo "[INFO] Creando nuevo entorno virtual..."
+echo "[INFO] Creating new virtual environment..."
 $PYTHON_EXE -m venv "$VENV_DIR"
 if [ $? -ne 0 ]; then
-    echo "[ERROR] No se pudo crear el entorno virtual."
+    echo "[ERROR] Could not create the virtual environment."
     exit 1
 fi
 
 VENV_PYTHON="$VENV_DIR/bin/python"
 
-# 5. Actualizar herramientas de pip
-echo "[INFO] Actualizando pip, setuptools y wheel..."
+# 5. Upgrade pip tools
+echo "[INFO] Upgrading pip, setuptools, and wheel..."
 "$VENV_PYTHON" -m pip install --upgrade pip setuptools wheel
 
-# 6. Instalar PyTorch con soporte CUDA
-echo "[INFO] Instalando PyTorch con soporte CUDA..."
-"$VENV_PYTHON" -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124 || "$VENV_PYTHON" -m pip install torch torchvision torchaudio
-"$VENV_PYTHON" -m pip install --upgrade torchvision
+# 6. Install PyTorch with ROCm support
 
-# 7. Instalar dependencias Krea-2
-echo "[INFO] Instalando Diffusers, Transformers, PEFT, Accelerate, Safetensors y Hugging Face Hub..."
+echo "[INFO] Detecting AMD GPU architecture..."
+
+# Auto-detect GFX architecture ID (e.g., gfx1100, gfx1030)
+GFX_ARCH=""
+if command -v rocminfo &>/dev/null; then
+    GFX_ARCH=$(rocminfo | grep -E "Name:\s+gfx" | head -n 1 | awk '{print $2}')
+elif command -v rocm-smi &>/dev/null; then
+    GFX_ARCH=$(rocm-smi --showid | grep -oE "gfx[0-9a-z]+" | head -n 1)
+fi
+
+# Fallback or manual entry if auto-detection fails
+if [ -z "$GFX_ARCH" ]; then
+    echo "[WARNING] Could not auto-detect GFX architecture."
+    echo "Defaulting to gfx1030 (RDNA2 / RX 6000 series). Adjust GFX_ARCH if needed."
+    GFX_ARCH="gfx1030"
+fi
+
+echo "[INFO] Using architecture target: $GFX_ARCH"
+echo "[INFO] Installing PyTorch with ROCm support..."
+
+INDEX_URL="https://rocm.nightlies.amd.com/whl-multi-arch/"
+
+"$VENV_PYTHON" -m pip install \
+    "amd-torch-device-$GFX_ARCH" \
+    "amd-torchvision-device-$GFX_ARCH" \
+    torch torchvision torchaudio \
+    --index-url "$INDEX_URL"
+
+export HSA_OVERRIDE_GFX_VERSION=10.3.0
+export PYTORCH_ROCM_ARCH=gfx1030
+
+# 7. Install Krea-2 dependencies
+echo "[INFO] Installing Diffusers, Transformers, PEFT, Accelerate, Safetensors, and Hugging Face Hub..."
 "$VENV_PYTHON" -m pip install diffusers transformers peft accelerate safetensors huggingface_hub
 
-echo "[INFO] Instalando BitsAndBytes y utilidades..."
+echo "[INFO] Installing BitsAndBytes and utilities..."
 "$VENV_PYTHON" -m pip install bitsandbytes sentencepiece protobuf psutil
 
-# Curaduría del dataset (0_curate_dataset.py): puntuación de identidad facial
-# con ArcFace. CPU-only; el modelo (~300 MB) se descarga en el primer uso.
-echo "[INFO] Instalando InsightFace para la curaduría del dataset..."
+# Dataset curation (0_curate_dataset.py): facial identity scoring
+# with ArcFace. CPU-only; the model (~300 MB) is downloaded on first use.
+echo "[INFO] Installing InsightFace for dataset curation..."
 "$VENV_PYTHON" -m pip install insightface onnxruntime opencv-python || \
-    echo "[AVISO] InsightFace no se pudo instalar; la curaduría no estará disponible. El resto del entrenador funciona igualmente."
+    echo "[WARNING] InsightFace could not be installed; curation will not be available. The rest of the trainer works regardless."
 
-# 8. Verificación final
+# 8. Final verification
 echo ""
 echo "========================================================"
-echo "   VERIFICACIÓN FINAL DE INSTALACIÓN"
+echo "   FINAL INSTALLATION VERIFICATION"
 echo "========================================================"
-"$VENV_PYTHON" -c "import torch; print('PyTorch:', torch.__version__); print('CUDA compilada:', torch.version.cuda); print('CUDA disponible:', torch.cuda.is_available()); print('GPU:', torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'NINGUNA')"
+"$VENV_PYTHON" -c "import torch; print('PyTorch:', torch.__version__); print('ROCM available:', torch.cuda.is_available()); print('GPU:', torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'NONE')"
 
 echo ""
-echo "[OK] Instalación completada. Ejecute ./run_LoRAlab-Krea2.sh para iniciar el entrenador."
+echo "[OK] Installation complete. Run ./run_LoRAlab-Krea2.sh to launch the trainer."

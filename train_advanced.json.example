@@ -1,33 +1,33 @@
 {
-  "_comment": "Copia a train_advanced.json. Estas claves NO las toca la UI web (que reescribe train_settings.json con un objeto de claves fijas). Precedencia: train_settings.json > train_advanced.json > preset > defaults. Todo es opt-in: con este fichero ausente el entrenamiento es idéntico al histórico. El bloque EFFECTIVE CONFIG que se imprime al arrancar muestra el origen de cada valor.",
+  "_comment": "Copy to train_advanced.json. These keys are NOT touched by the web UI (which rewrites train_settings.json with a fixed set of keys). Precedence: train_settings.json > train_advanced.json > preset > defaults. Everything is opt-in: if this file is absent, training is identical to the historical behavior. The EFFECTIVE CONFIG block printed on startup shows the origin of each value.",
 
-  "_preset": "stable_v2 activa de golpe el conjunto recomendado: sampler epoch, lora_dtype fp32, eps 1e-6, betas [0.9,0.99], targets en alta precisión, loss por ventana, 5 checkpoints, guardas NaN/OOM. Las claves explícitas de abajo siguen ganando.",
+  "_preset": "stable_v2 activates the recommended set all at once: epoch sampler, fp32 lora_dtype, 1e-6 eps, [0.9,0.99] betas, high-precision targets, window loss, 5 checkpoints, NaN/OOM guards. Explicit keys below still take precedence.",
   "preset": "",
 
-  "_A1": "Precisión. fp32 evita que los updates pequeños se redondeen a cero en bf16 (epsilon relativo ~0.0039). Cuesta ~+235 MB de VRAM más el casteo de activaciones: verifica la fase 1024 antes de dejarlo fijo.",
+  "_A1": "Precision. fp32 prevents small updates from rounding to zero in bf16 (relative epsilon ~0.0039). Costs ~+235 MB of VRAM plus activation casting: verify the 1024 phase before setting permanently.",
   "lora_dtype": "bf16",
   "high_precision_targets": false,
 
-  "_A2": "epoch = cada imagen se ve una vez por época. legacy = muestreo uniforme por bucket, que da a una imagen sola hasta 16x más pasos que a una del bucket grande.",
+  "_A2": "epoch = each image is seen once per epoch. legacy = uniform sampling per bucket, which gives a single image up to 16x more steps than one in a large bucket.",
   "sampler": "legacy",
 
-  "_A3_A8": "Guardas. Un solo inf hace que clip_grad_norm_ escale todos los gradientes a NaN y AdamW los escriba de forma permanente en sus momentos.",
+  "_A3_A8": "Guards. A single inf causes clip_grad_norm_ to scale all gradients to NaN and AdamW to permanently write them into its momentum states.",
   "nan_guard": true,
   "nan_abort_after": 20,
   "max_loss": 0.0,
   "oom_guard": true,
   "oom_abort_after": 3,
 
-  "_A4": "abort se niega a reiniciar en silencio desde el paso 0 cuando el checkpoint existe pero no se puede restaurar.",
+  "_A4": "abort refuses to silently restart from step 0 when the checkpoint exists but cannot be restored.",
   "resume_on_corrupt": "abort",
 
-  "_A5_A7": "warmup_units aclara que total_steps son micro-pasos pero el schedule va en updates del optimizador. eps 1e-6 y betas [0.9,0.99] van mejor en runs cortos: con 750 updates, beta2=0.999 tiene un horizonte de ~1000 y nunca calienta.",
+  "_A5_A7": "warmup_units clarifies that total_steps are micro-steps but the schedule operates in optimizer updates. 1e-6 eps and [0.9,0.99] betas work better for short runs: with 750 updates, beta2=0.999 has a horizon of ~1000 and never warms up.",
   "warmup_units": "updates",
   "optimizer": "adamw8bit_paged",
   "optimizer_eps": 1e-8,
   "optimizer_betas": [0.9, 0.999],
 
-  "_B1": "content sesga a sigma baja (detalle y parecido), style a sigma alta (composición y color). La ponderación bell reequilibra los micro-batches dentro de la ventana de acumulación.",
+  "_B1": "content biases toward low sigma (detail and likeness), style toward high sigma (composition and color). Bell weighting rebalances micro-batches within the accumulation window.",
   "timestep_weighting": "none",
   "content_or_style": "balanced",
   "logit_normal_mu": 0.0,
@@ -35,10 +35,10 @@
   "sigma_min": 0.0,
   "sigma_max": 1.0,
 
-  "_B3": "noise_offset arregla el SNR terminal no nulo de DDPM. En rectified flow sigma=1 ya es ruido puro en distribución, así que el problema que resuelve no existe aquí: déjalo en 0.",
+  "_B3": "noise_offset fixes DDPM's non-zero terminal SNR. In rectified flow, sigma=1 is already pure distribution noise, so the problem it solves does not exist here: leave it at 0.",
   "noise_offset": 0.0,
 
-  "_B2": "El LoRA exportado y los previews usan los pesos EMA; el resume_checkpoint conserva los crudos. Avisa si el horizonte del decay supera un tercio del run.",
+  "_B2": "The exported LoRA and previews use EMA weights; resume_checkpoint retains raw weights. Warns if decay horizon exceeds a third of the run.",
   "use_ema": false,
   "ema_decay": 0.99,
   "ema_device": "cpu",
@@ -49,14 +49,14 @@
   "lr_step_gamma": 0.5,
   "lr_step_count": 4,
 
-  "_C1": "Sigmas y ruido fijos por imagen: convierte un escalar ruidoso en una curva legible para decidir qué checkpoint es el bueno. Con menos de ~30 imágenes usa val_cache_dir en vez de val_split.",
+  "_C1": "Fixed sigmas and noise per image: converts a noisy scalar into a readable curve to determine which checkpoint is the good one. For fewer than ~30 images, use val_cache_dir instead of val_split.",
   "val_split": 0.0,
   "val_cache_dir": "",
   "validate_every": 0,
   "validation_sigmas": [0.25, 0.5, 0.75, 1.0],
   "val_seed": 1234,
 
-  "_C2_C3_C4": "train_log.csv guarda la loss cruda y la sigma de cada paso, así que puedes agrupar por decil de sigma offline. ss_network_alpha importa: sin él un loader asume alpha=rank y aplica el LoRA a media fuerza.",
+  "_C2_C3_C4": "train_log.csv saves raw loss and sigma for each step, allowing you to group by sigma decile offline. ss_network_alpha matters: without it, a loader assumes alpha=rank and applies the LoRA at half strength.",
   "loss_display": "cumulative",
   "loss_window": 100,
   "csv_log": true,
@@ -64,10 +64,10 @@
   "export_metadata": true,
   "export_alpha_tensors": false,
 
-  "_C5": "Requiere sample_prompts en pre_cache_settings.json y re-ejecutar el Pre-Caché.",
+  "_C5": "Requires sample_prompts in pre_cache_settings.json and re-running Pre-Cache.",
   "preview_source": "caption",
   "preview_walk_seed": false,
 
-  "_D3": "Útil a 0.05-0.10 en LoRAs de estilo. Para un LoRA de personaje con trigger word suele ser contraproducente: le enseña a dispararse incondicionalmente.",
+  "_D3": "Useful at 0.05-0.10 for style LoRAs. For a character LoRA with a trigger word, it is usually counterproductive: it teaches it to trigger unconditionally.",
   "caption_dropout_rate": 0.0
 }

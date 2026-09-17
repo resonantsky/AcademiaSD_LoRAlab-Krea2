@@ -27,7 +27,7 @@
   "trigger_word": "",
   "hf_token": "",
 
-  "_progressive": "Modo de resolución. 'off' = caché plana con target_area. Resolución constante: '512', '768', '1024' (o cualquier número suelto como '640'), que entrenan todos los pasos a esa resolución leyendo el subdir <label>/ de la caché y escribiendo en output_dir/phase0_<label>/. Progresivo multi-fase con hand-off de pesos: '768_1024' o '512_768_1024'. Los modos distintos de 'off' requieren que el Pre-Caché haya generado el subdir correspondiente vía 'resolutions'.",
+  "_progressive": "Resolution mode. 'off' = flat cache with target_area. Constant resolution: '512', '768', '1024' (or any standalone number like '640'), which trains all steps at that resolution by reading the cache's <label>/ subdir and writing to output_dir/phase0_<label>/. Multi-phase progressive with weight hand-off: '768_1024' or '512_768_1024'. Modes other than 'off' require Pre-Cache to have generated the corresponding subdir via 'resolutions'.",
   "progressive": "off",
   "phase_portions": [],
   "export_models_dir": "",

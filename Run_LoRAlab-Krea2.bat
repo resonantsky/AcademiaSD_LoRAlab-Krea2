@@ -13,12 +13,12 @@ echo ================================================================
 echo        ACADEMIASD - KREA-2 LORA TRAINER
 echo ================================================================
 echo.
-echo Carpeta del entrenador:
+echo Trainer directory:
 echo %BASE_DIR%
 echo.
 
 rem ================================================================
-rem Buscar el entorno virtual existente
+rem Find existing virtual environment
 rem ================================================================
 
 if exist "%BASE_DIR%.venv\Scripts\python.exe" (
@@ -47,9 +47,9 @@ if exist "%BASE_DIR%..\ .venv\Scripts\python.exe" (
 )
 
 echo.
-echo [ERROR] No se ha encontrado el entorno virtual.
+echo [ERROR] Virtual environment not found.
 echo.
-echo Se han buscado:
+echo The following paths were checked:
 echo   %BASE_DIR%.venv\Scripts\python.exe
 echo   %BASE_DIR%venv\Scripts\python.exe
 echo   %BASE_DIR%env\Scripts\python.exe
@@ -61,51 +61,51 @@ exit /b 1
 
 :python_found
 
-echo Entorno Python encontrado:
+echo Python environment found:
 echo %PYTHON_EXE%
 echo.
 
 if not exist "%BASE_DIR%scripts\python\server.py" (
-    echo [ERROR] No existe scripts\python\server.py
+    echo [ERROR] scripts\python\server.py does not exist
     echo.
     pause
     exit /b 1
 )
 
 if not exist "%BASE_DIR%web\trainer_ui.html" (
-    echo [ERROR] No existe web\trainer_ui.html
+    echo [ERROR] web\trainer_ui.html does not exist
     echo.
     pause
     exit /b 1
 )
 
-echo Comprobando Python...
+echo Checking Python...
 "%PYTHON_EXE%" --version
 
 if errorlevel 1 (
     echo.
-    echo [ERROR] No se puede ejecutar Python.
+    echo [ERROR] Cannot execute Python.
     pause
     exit /b 1
 )
 
 echo.
 echo ================================================================
-echo Iniciando servidor web...
+echo Starting web server...
 echo ================================================================
 echo.
-echo Abre en el navegador:
+echo Open in browser:
 echo.
 echo     http://127.0.0.1:5000
 echo.
-echo Cierra esta ventana para detener el servidor.
+echo Close this window to stop the server.
 echo.
 
 "%PYTHON_EXE%" "%BASE_DIR%scripts\python\server.py"
 
 echo.
 echo ================================================================
-echo El servidor ha finalizado.
+echo Server has stopped.
 echo ================================================================
 pause
 

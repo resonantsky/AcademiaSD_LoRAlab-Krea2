@@ -5,15 +5,15 @@
 BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PYTHON_EXE=""
 
-# Auto-wrap en tmux: el server sobrevive a la caída de la sesión SSH y correr
-# este script otra vez reengancha a la sesión existente (-A) en vez de duplicar.
-# Desactivable con NO_TMUX=1.
+# Auto-wrap in tmux: the server survives SSH session drops and running
+# this script again reattaches to the existing session (-A) instead of duplicating.
+# Can be disabled with NO_TMUX=1.
 if [ -z "$TMUX" ] && [ -z "$NO_TMUX" ] && command -v tmux &>/dev/null; then
     echo ""
-    echo "[INFO] Servidor en sesión tmux 'loralab'."
-    echo "       Desconectar sin parar: Ctrl+B y luego D"
-    echo "       Volver a la sesión:    ./run_LoRAlab-Krea2.sh  (o: tmux attach -t loralab)"
-    echo "       Sin tmux:              NO_TMUX=1 ./run_LoRAlab-Krea2.sh"
+    echo "[INFO] Server running in tmux session 'loralab'."
+    echo "       Detach without stopping: Ctrl+B then D"
+    echo "       Reattach to session:    ./run_LoRAlab-Krea2.sh  (or: tmux attach -t loralab)"
+    echo "       Run without tmux:       NO_TMUX=1 ./run_LoRAlab-Krea2.sh"
     echo ""
     exec tmux new-session -A -s loralab "NO_TMUX=1 '$BASE_DIR/run_LoRAlab-Krea2.sh'"
 fi
@@ -23,11 +23,11 @@ echo "================================================================"
 echo "       ACADEMIASD - KREA-2 LORA TRAINER (Linux)"
 echo "================================================================"
 echo ""
-echo "Carpeta del entrenador:"
+echo "Trainer directory:"
 echo "$BASE_DIR"
 echo ""
 
-# Buscar entorno virtual existente
+# Find existing virtual environment
 if [ -f "$BASE_DIR/.venv/bin/python" ]; then
     PYTHON_EXE="$BASE_DIR/.venv/bin/python"
 elif [ -f "$BASE_DIR/venv/bin/python" ]; then
@@ -39,42 +39,42 @@ elif [ -f "$BASE_DIR/../venv/bin/python" ]; then
 fi
 
 if [ -z "$PYTHON_EXE" ]; then
-    echo "[ERROR] No se ha encontrado el entorno virtual."
-    echo "Ejecute ./install_LoRAlab-Krea2.sh primero para crearlo."
+    echo "[ERROR] Virtual environment not found."
+    echo "Run ./install_LoRAlab-Krea2.sh first to create it."
     exit 1
 fi
 
-echo "Entorno Python encontrado:"
+echo "Python environment found:"
 echo "$PYTHON_EXE"
 echo ""
 
 if [ ! -f "$BASE_DIR/scripts/python/server.py" ]; then
-    echo "[ERROR] No existe scripts/python/server.py"
+    echo "[ERROR] scripts/python/server.py does not exist"
     exit 1
 fi
 
 if [ ! -f "$BASE_DIR/web/trainer_ui.html" ]; then
-    echo "[ERROR] No existe web/trainer_ui.html"
+    echo "[ERROR] web/trainer_ui.html does not exist"
     exit 1
 fi
 
-echo "Comprobando Python..."
-"$PYTHON_EXE" --version || { echo "[ERROR] No se puede ejecutar Python."; exit 1; }
+echo "Checking Python..."
+"$PYTHON_EXE" --version || { echo "[ERROR] Cannot execute Python."; exit 1; }
 
 echo ""
 echo "================================================================"
-echo "Iniciando servidor web..."
+echo "Starting web server..."
 echo "================================================================"
 echo ""
-echo "Abre en el navegador:"
+echo "Open in browser:"
 echo ""
 echo "    http://127.0.0.1:5000"
 echo ""
-echo "Presiona Ctrl+C para detener el servidor."
+echo "Press Ctrl+C to stop the server."
 echo ""
 
-# Reduce la fragmentacion de VRAM, decisiva en GPUs de 12 GB a 768x768 o mas.
-# server.py lanza los scripts con subprocess.Popen sin env=, asi que lo heredan.
+# Reduces VRAM fragmentation, critical on 12 GB GPUs at 768x768 or higher.
+# server.py launches scripts via subprocess.Popen without env=, so they inherit it.
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
 
 "$PYTHON_EXE" "$BASE_DIR/scripts/python/server.py"

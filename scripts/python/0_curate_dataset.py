@@ -1,21 +1,15 @@
 # -*- coding: utf-8 -*-
 """
-0_curate_dataset.py — Curaduría del dataset por identidad facial (previa al entrenamiento)
-Dataset curation by face identity (runs before training)
+0_curate_dataset.py — Dataset curation by face identity (runs before training)
 
-Puntúa cada imagen del dataset por similitud ArcFace contra 3 imágenes baseline y
-reparte el dataset en dos grupos: buena y baja calificación. El entrenador aplica
-un peso distinto a cada grupo (ver curation_weights en 2_train_lora_krea2.py).
-Nada se borra ni se mueve: el grupo de baja calificación sigue entrenando, atenuado.
+Scores every dataset image by ArcFace similarity against 3 baseline images and
+splits the dataset into two groups: good and low rating. The trainer applies
+a different weight to each group (see curation_weights in 2_train_lora_krea2.py).
+Nothing is deleted or moved: the low rating group still trains, but attenuated.
 
-Scores every dataset image by ArcFace similarity against 3 baseline images and splits
-the dataset into two groups: good and low rating. The trainer applies a different
-weight to each group. Nothing is deleted or moved.
+The 0_ prefix indicates that it runs BEFORE pre-caching: it decides the training weight
+for each image, not what gets cached. It is CPU-only, so it does not compete for VRAM.
 
-El prefijo 0_ indica que corre ANTES del pre-caché: decide con qué peso entrenará
-cada imagen, no qué se cachea. Es CPU-only, así que no compite por VRAM.
-
-Lee configuración desde pre_cache_settings.json (clave "curation").
 Reads configuration from pre_cache_settings.json (key "curation").
 """
 import datetime
@@ -32,51 +26,51 @@ try:
 except Exception:
     pass
 
-# Raíz del proyecto (este script vive en scripts/python/). Todas las rutas se
-# anclan aquí en vez de al directorio de trabajo, para que funcione invocado
-# desde cualquier sitio.
+# Project root (this script lives in scripts/python/). All paths are
+# anchored here instead of the working directory, so it works when
+# invoked from anywhere.
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 def from_root(path):
-    """Resuelve una ruta relativa contra la raíz del proyecto (absolutas intactas)."""
+    """Resolves a relative path against project root (absolute paths left intact)."""
     return path if os.path.isabs(path) else os.path.normpath(os.path.join(PROJECT_ROOT, path))
 
 
 IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".webp")
 
-# ── DEFAULTS / VALORES POR DEFECTO ──────────────────────────────────────────
+# ── DEFAULTS ────────────────────────────────────────────────────────────────
 DEFAULTS = {
     "dataset_path": "./dataset",
     "curation": {
-        "baselines": [],       # 3 imágenes que mejor representan el look buscado
+        "baselines": [],       # 3 images that best represent the target look
         "weight_good": 1.0,
         "weight_bad": 0.5,
     },
 }
 
-# El piso del corte automático: por debajo de ~0.25 de similitud coseno, ArcFace
-# ya no considera que sean la misma persona. Sirve de suelo para que un dataset
-# muy disperso no acabe mandando imágenes válidas al grupo bajo.
+# The floor for the automatic threshold: below ~0.25 cosine similarity, ArcFace
+# no longer considers them to be the same person. Serves as a baseline so a highly
+# dispersed dataset doesn't end up sending valid images to the low group.
 DIFFERENT_PERSON_FLOOR = 0.25
 
-# Mínimo de caras puntuadas para que la estadística de outliers signifique algo.
+# Minimum number of scored faces required for outlier statistics to be meaningful.
 MIN_SCORES_FOR_THRESHOLD = 4
 
 REPORT_NAME = "curation_report.json"
 CACHE_NAME = ".curation_cache.npz"
 
-# ── CARGAR CONFIGURACIÓN / LOAD CONFIG ──────────────────────────────────────
+# ── LOAD CONFIG ─────────────────────────────────────────────────────────────
 CONFIG_PATH = os.environ.get("PRECACHE_SETTINGS_PATH",
                              os.path.join(PROJECT_ROOT, "pre_cache_settings.json"))
 
 if os.path.exists(CONFIG_PATH):
     with open(CONFIG_PATH, "r", encoding="utf-8") as f:
         cfg = json.load(f)
-    print(f"✓ Configuration loaded from {CONFIG_PATH} / Configuración cargada desde {CONFIG_PATH}")
+    print(f"✓ Configuration loaded from {CONFIG_PATH}")
 else:
     cfg = {}
-    print(f"⚠ {CONFIG_PATH} not found, using defaults / No se encontró {CONFIG_PATH}, usando valores por defecto.")
+    print(f"⚠ {CONFIG_PATH} not found, using defaults.")
 
 DATASET_PATH = from_root(cfg.get("dataset_path", DEFAULTS["dataset_path"]))
 
@@ -87,16 +81,15 @@ WEIGHT_BAD = float(_cur.get("weight_bad", DEFAULTS["curation"]["weight_bad"]))
 
 
 # =============================================================================
-# EMBEDDINGS FACIALES / FACE EMBEDDINGS
+# FACE EMBEDDINGS
 # =============================================================================
 
 class FaceEmbedder:
-    """Extractor de embeddings ArcFace (InsightFace) para puntuar identidad.
+    """ArcFace (InsightFace) embedding extractor for scoring identity similarity.
 
-    Carga los módulos de detección + reconocimiento en CPU: la curaduría corre
-    antes del entrenamiento pero no debe competir por VRAM con nada. Los
-    embeddings salen ya normalizados en L2 (`normed_embedding`), así que la
-    similitud coseno entre dos caras es un producto punto directo.
+    Loads detection + recognition modules on CPU: curation runs before
+    training, so it must not compete for VRAM. Embeddings are returned
+    L2-normalized (`normed_embedding`), making cosine similarity a direct dot product.
     """
 
     def __init__(self):
@@ -108,32 +101,29 @@ class FaceEmbedder:
         try:
             from insightface.app import FaceAnalysis
         except ImportError:
-            print("\n[!] InsightFace no está instalado / is not installed.")
-            print("    Ejecuta ./install_LoRAlab-Krea2.sh, o instala a mano:")
+            print("\n[!] InsightFace is not installed.")
+            print("    Run ./install_LoRAlab-Krea2.sh, or install manually:")
             print("    pip install insightface onnxruntime opencv-python\n")
             sys.exit(1)
-        print("Cargando modelo facial (la primera vez descarga ~300 MB)... / "
-              "Loading face model (first run downloads ~300 MB)...")
+        print("Loading face model (first run downloads ~300 MB)...")
         self._app = FaceAnalysis(
             name="buffalo_l",
             allowed_modules=["detection", "recognition"],
             providers=["CPUExecutionProvider"],
         )
-        # ctx_id=-1 fuerza CPU.
+        # ctx_id=-1 forces CPU execution.
         self._app.prepare(ctx_id=-1)
 
     def _detect_with_pad_retry(self, img_bgr):
-        """Detecta caras, reintentando con un borde añadido si no encuentra ninguna.
+        """Detects faces, retrying with an added border if none are found.
 
-        RetinaFace (buffalo_l) falla con caras que LLENAN el encuadre: un primer
-        plano es demasiado grande para sus escalas de anclaje y devuelve vacío.
-        Añadir un borde reduce la fracción del encuadre que ocupa la cara y la
-        devuelve al rango útil del detector; desplaza coordenadas pero no el
-        contenido, así que el embedding no cambia. Sólo se añade cuando la pasada
-        sin borde falla, así que el encuadre normal no sufre regresión.
+        RetinaFace (buffalo_l) fails on faces that FILL the frame: extreme close-ups
+        are too large for its anchor scales and return empty results. Adding a
+        border reduces the face's bounding box fraction back into the detector's
+        useful range; it shifts coordinates without changing content or embeddings.
+        This fallback only triggers when the initial pass fails, preventing regression.
 
-        Sin esto se pierden justo los primeros planos, que suelen ser las mejores
-        imágenes del dataset.
+        Without this retry, close-up shots—often the best dataset images—would be lost.
         """
         import cv2
         faces = self._app.get(img_bgr)
@@ -149,10 +139,10 @@ class FaceEmbedder:
         return []
 
     def embed(self, image_path):
-        """Embedding de la cara MÁS GRANDE de la imagen, o None si no hay ninguna.
+        """Embedding for the LARGEST face in the image, or None if no face is found.
 
-        Carga con PIL (soporta rutas unicode, a diferencia de cv2.imread) y
-        convierte al array BGR que espera InsightFace.
+        Loads via PIL (supports unicode paths, unlike cv2.imread) and converts
+        to the BGR array expected by InsightFace.
         """
         self._ensure_loaded()
         import cv2
@@ -160,7 +150,7 @@ class FaceEmbedder:
             with Image.open(image_path) as pil:
                 img_bgr = cv2.cvtColor(np.array(pil.convert("RGB")), cv2.COLOR_RGB2BGR)
         except Exception as exc:
-            print(f"\n[!] No se pudo leer {os.path.basename(image_path)}: {exc}")
+            print(f"\n[!] Failed to read {os.path.basename(image_path)}: {exc}")
             return None
         faces = self._detect_with_pad_retry(img_bgr)
         if not faces:
@@ -171,22 +161,22 @@ class FaceEmbedder:
 
 
 # =============================================================================
-# CACHÉ DE EMBEDDINGS / EMBEDDING CACHE
+# EMBEDDING CACHE
 # =============================================================================
 
 def fingerprint(path):
-    """Huella de la imagen: mtime+tamaño. Mismo criterio que file_fingerprint()
-    del pre-caché — barato y suficiente para saber si hay que re-embeber."""
+    """Image fingerprint: mtime+size. Same criterion as file_fingerprint()
+    in pre-cache — fast and reliable enough to know if re-embedding is required."""
     st = os.stat(path)
     return f"{int(st.st_mtime)}:{st.st_size}"
 
 
 def load_cache(dataset_dir):
-    """Embeddings ya calculados, indexados por nombre de archivo.
+    """Pre-computed embeddings, indexed by filename.
 
-    Devuelve (embeddings, fingerprints). Un embedding de longitud 0 significa
-    "ya se miró y no hay cara" — se cachea igual que un acierto, para no repetir
-    la detección (que es la parte lenta) en cada re-scan.
+    Returns (embeddings, fingerprints). An embedding with length 0 means
+    "inspected, but no face detected" — cached as a hit to avoid repeating
+    slow face detection steps on subsequent re-scans.
     """
     path = os.path.join(dataset_dir, CACHE_NAME)
     if not os.path.exists(path):
@@ -197,7 +187,7 @@ def load_cache(dataset_dir):
             embs = {k: data[k] for k in data.files if k != "__fingerprints__"}
         return embs, fps
     except Exception:
-        print("[i] Caché de embeddings ilegible; se recalcula / unreadable cache, recomputing.")
+        print("[i] Unreadable embedding cache; recomputing.")
         return {}, {}
 
 
@@ -208,7 +198,7 @@ def save_cache(dataset_dir, embs, fps):
         np.savez_compressed(tmp, __fingerprints__=np.array(json.dumps(fps)), **embs)
         os.replace(tmp, path)
     except Exception as exc:
-        print(f"[i] No se pudo guardar la caché de embeddings ({exc}) — no es crítico.")
+        print(f"[i] Could not save embedding cache ({exc}) — non-critical.")
         try:
             if os.path.exists(tmp):
                 os.remove(tmp)
@@ -217,13 +207,13 @@ def save_cache(dataset_dir, embs, fps):
 
 
 # =============================================================================
-# CURADURÍA / CURATION
+# CURATION
 # =============================================================================
 
 def resolve_baseline(name, dataset_dir):
-    """Un baseline puede venir como stem ('img_003'), nombre completo
-    ('img_003.png') o ruta. Se admite fuera del dataset: una foto de referencia
-    limpia es un baseline perfectamente válido aunque no se entrene."""
+    """A baseline can be defined as a stem ('img_003'), full filename
+    ('img_003.png'), or path. Supported outside dataset: a clean reference photo
+    is a valid baseline even if not used directly for training."""
     candidates = [name, os.path.join(dataset_dir, name)]
     for ext in IMAGE_EXTS:
         candidates.append(os.path.join(dataset_dir, name + ext))
@@ -235,17 +225,16 @@ def resolve_baseline(name, dataset_dir):
 
 
 def auto_threshold(scores):
-    """Corte automático: la valla de outliers bajos del propio dataset.
+    """Automatic cutoff calculation based on lower outliers:
 
-        cutoff = max(mediana − 1.5·IQR, 0.25)
+        cutoff = max(median − 1.5 · IQR, 0.25)
 
-    Un umbral absoluto no sirve porque cada dataset tiene su propia dispersión:
-    uno muy homogéneo dejaría el grupo bajo vacío y uno disperso mandaría medio
-    dataset abajo. La valla robusta se adapta; el piso evita que un dataset malo
-    normalice su propia deriva.
+    An absolute threshold is unreliable because each dataset varies in variance.
+    A robust fence adapts dynamically; the lower floor prevents poor datasets
+    from normalizing identity drift.
 
-    Devuelve None cuando no hay caras suficientes para que la estadística
-    signifique algo — en ese caso todo va al grupo bueno.
+    Returns None when there aren't enough faces to produce meaningful stats —
+    in that case, everything defaults to the good rating group.
     """
     ss = sorted(s for s in scores if s is not None)
     if len(ss) < MIN_SCORES_FOR_THRESHOLD:
@@ -258,33 +247,32 @@ def auto_threshold(scores):
 
 def curate():
     if not os.path.isdir(DATASET_PATH):
-        print(f"[!] La carpeta del dataset no existe / Dataset folder does not exist: {DATASET_PATH}")
+        print(f"[!] Dataset folder does not exist: {DATASET_PATH}")
         return 1
 
-    # Sólo el nivel superior, igual que el pre-caché: lo que hay en subcarpetas
-    # no se entrena, así que tampoco se puntúa.
+    # Top-level directory only, matching pre-cache behavior: images in subfolders
+    # are not trained on, so they are not scored here.
     files = sorted(f for f in os.listdir(DATASET_PATH)
                    if not f.startswith(".")
                    and os.path.isfile(os.path.join(DATASET_PATH, f))
                    and f.lower().endswith(IMAGE_EXTS))
     if not files:
-        print(f"[!] No hay imágenes en / No images found in: {DATASET_PATH}")
+        print(f"[!] No images found in: {DATASET_PATH}")
         return 1
 
     if len(BASELINES) != 3:
-        print(f"\n[!] Hacen falta exactamente 3 baselines (hay {len(BASELINES)}) / "
-              f"exactly 3 baselines required.")
-        print("    Elige en la UI las 3 imágenes que mejor representan el look que buscas,")
-        print("    o añádelas a mano en pre_cache_settings.json:")
+        print(f"\n[!] Exactly 3 baselines required (found {len(BASELINES)}).")
+        print("    Select 3 representative target images in the UI,")
+        print("    or add them manually to pre_cache_settings.json:")
         print('      "curation": { "baselines": ["img_003", "img_017", "img_042"] }')
-        print("\n    Se usan 3 y se promedia porque una sola foto hornea su propio sesgo de")
-        print("    ángulo, expresión e iluminación en la puntuación de todas las demás.\n")
+        print("\n    Using 3 averaged baselines prevents angle, expression,")
+        print("    and lighting bias from dominating individual scores.\n")
         return 1
 
     resolved = [(b, resolve_baseline(b, DATASET_PATH)) for b in BASELINES]
     missing = [b for b, p in resolved if p is None]
     if missing:
-        print(f"\n[!] No se encontraron estos baselines / baselines not found: {', '.join(missing)}")
+        print(f"\n[!] Baselines not found: {', '.join(missing)}")
         return 1
 
     embedder = FaceEmbedder()
@@ -292,9 +280,9 @@ def curate():
     cache_hits = 0
 
     def embed_cached(path, key):
-        """Embedding vía caché por (mtime, tamaño). La carga del modelo y la
-        detección son la parte lenta, así que cambiar de baselines o mover el
-        umbral vuelve a puntuar en segundos."""
+        """Retrieves embedding via cache matching (mtime, size).
+        Model loading and face detection are slow, so changing baselines or
+        thresholds allows re-scoring within seconds."""
         nonlocal cache_hits
         fp = fingerprint(path)
         if key in embs and fps.get(key) == fp:
@@ -310,8 +298,8 @@ def curate():
     base_embs = []
     base_missing_face = []
     for name, path in resolved:
-        # Se cachean bajo su ruta absoluta si viven fuera del dataset, para no
-        # colisionar con una imagen del dataset que se llame igual.
+        # Cache using absolute paths if located outside dataset directory
+        # to avoid key collisions with dataset images sharing the same name.
         key = os.path.basename(path) if os.path.dirname(path) == DATASET_PATH else path
         emb = embed_cached(path, key)
         if emb is None:
@@ -319,25 +307,23 @@ def curate():
         base_embs.append(emb)
 
     if base_missing_face:
-        print(f"\n[!] No se detectó cara en estos baselines / no face in baselines: "
-              f"{', '.join(base_missing_face)}")
-        print("    Elige imágenes con una cara clara y bien visible.\n")
+        print(f"\n[!] No face detected in baselines: {', '.join(base_missing_face)}")
+        print("    Please select baseline images with clear, visible faces.\n")
         save_cache(DATASET_PATH, embs, fps)
         return 1
 
-    # ── Puntuación / Scoring ─────────────────────────────────────────────────
-    print(f"Puntuando {len(files)} imagen(es) contra 3 baselines... / Scoring...")
+    # ── Scoring ──────────────────────────────────────────────────────────────
+    print(f"Scoring {len(files)} image(s) against 3 baselines...")
     scores = {}
     for i, fname in enumerate(files, 1):
         path = os.path.join(DATASET_PATH, fname)
         stem = os.path.splitext(fname)[0]
         emb = embed_cached(path, fname)
-        # El promedio de las 3 similitudes equivale a la similitud contra el
-        # centroide (sin normalizar) de los baselines: ninguna foto suelta puede
-        # dominar la puntuación con su encuadre particular.
+        # Averaging 3 similarities is equivalent to computing similarity against
+        # the unnormalized centroid of the baselines: prevents single shot bias.
         scores[stem] = None if emb is None else float(np.mean([float(np.dot(b, emb))
                                                                for b in base_embs]))
-        print(f"\rPuntuando... {i}/{len(files)}", end="", flush=True)
+        print(f"\rScoring... {i}/{len(files)}", end="", flush=True)
     print()
 
     save_cache(DATASET_PATH, embs, fps)
@@ -346,12 +332,10 @@ def curate():
     scored = [s for s in scores.values() if s is not None]
     no_face = len(scores) - len(scored)
 
-    # ── Informe / Report ─────────────────────────────────────────────────────
-    # Vive en la carpeta del dataset a propósito: esto es conocimiento del
-    # dataset, viaja con las imágenes y sobrevive a renombrar el proyecto.
-    # Sólo lleva puntuaciones; el umbral efectivo y las reasignaciones manuales
-    # viven en curation_overrides.json, que es propiedad de la UI y NO se
-    # sobrescribe al volver a puntuar.
+    # ── Report ───────────────────────────────────────────────────────────────
+    # Saved directly inside the dataset folder so scores travel with the dataset
+    # and persist through project renames. Effective threshold and manual
+    # overrides live in curation_overrides.json (owned by UI, preserved across re-runs).
     report = {
         "version": 1,
         "generated": datetime.datetime.now().isoformat(timespec="seconds"),
@@ -369,9 +353,9 @@ def curate():
         f.write("\n")
     os.replace(tmp, report_path)
 
-    # ── Resumen / Summary ────────────────────────────────────────────────────
-    # Las imágenes sin cara van al grupo BUENO: no puntuable no es lo mismo que
-    # mala (un plano de espalda o un perfil extremo son material legítimo).
+    # ── Summary ──────────────────────────────────────────────────────────────
+    # Images with no detected faces go to GOOD group: non-scorable is not the same
+    # as bad quality (back-facing shots or extreme profiles are valid training material).
     if threshold is None:
         good = len(scores)
         bad = 0
@@ -381,23 +365,22 @@ def curate():
 
     print()
     print("=" * 70)
-    print("  CURADURÍA COMPLETADA / CURATION COMPLETE")
+    print("  CURATION COMPLETE")
     print("=" * 70)
-    print(f"  Imágenes puntuadas   : {len(scored)} de {len(scores)}"
-          + (f" ({cache_hits} desde caché)" if cache_hits else ""))
+    print(f"  Scored images       : {len(scored)} of {len(scores)}"
+          + (f" ({cache_hits} from cache)" if cache_hits else ""))
     if no_face:
-        print(f"  Sin cara detectada   : {no_face} → grupo BUENO (no puntuable ≠ mala)")
+        print(f"  No face detected    : {no_face} → GOOD group (non-scorable ≠ bad)")
     if threshold is None:
-        print(f"  Umbral automático    : no calculable (hacen falta {MIN_SCORES_FOR_THRESHOLD} "
-              f"caras) → todo al grupo bueno")
+        print(f"  Automatic threshold : unavailable (requires at least {MIN_SCORES_FOR_THRESHOLD} "
+              f"faces) → assigning all to good group")
     else:
-        print(f"  Umbral automático    : {threshold * 100:.0f}%")
-        print(f"  Buena calificación   : {good} imagen(es) · peso ×{WEIGHT_GOOD}")
-        print(f"  Baja calificación    : {bad} imagen(es) · peso ×{WEIGHT_BAD}")
-    print(f"  Informe              : {report_path}")
+        print(f"  Automatic threshold : {threshold * 100:.0f}%")
+        print(f"  Good rating         : {good} image(s) · weight ×{WEIGHT_GOOD}")
+        print(f"  Low rating          : {bad} image(s) · weight ×{WEIGHT_BAD}")
+    print(f"  Report              : {report_path}")
     print("=" * 70)
-    print("\nAjusta el umbral y reasigna imágenes en la UI antes de entrenar. /")
-    print("Adjust the threshold and reassign images in the UI before training.\n")
+    print("\nAdjust the threshold and reassign images in the UI before training.\n")
     return 0
 
 

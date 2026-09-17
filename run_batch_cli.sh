@@ -1,23 +1,23 @@
 #!/usr/bin/env bash
 
 # AcademiaSD - Krea-2 LoRA Trainer CLI / Batch Runner for Linux
-# Ejecuta pre-cache y/o entrenamiento sin necesidad de la interfaz web Flask.
+# Runs pre-cache and/or training without needing the Flask web interface.
 
 BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENV_PYTHON=""
 
-# Auto-wrap en tmux: el batch sobrevive a la caída de la sesión SSH; volver a
-# ejecutar el script reengancha (-A). Desactivable con NO_TMUX=1.
+# Auto-wrap in tmux: the batch survives SSH session drops; running
+# the script again reattaches (-A). Can be disabled with NO_TMUX=1.
 if [ -z "$TMUX" ] && [ -z "$NO_TMUX" ] && command -v tmux &>/dev/null; then
     echo ""
-    echo "[INFO] Batch en sesión tmux 'loralab-batch'."
-    echo "       Desconectar sin parar: Ctrl+B y luego D"
-    echo "       Volver a la sesión:    tmux attach -t loralab-batch"
+    echo "[INFO] Batch in tmux session 'loralab-batch'."
+    echo "       Detach without stopping: Ctrl+B then D"
+    echo "       Reattach to session:    tmux attach -t loralab-batch"
     echo ""
     exec tmux new-session -A -s loralab-batch "NO_TMUX=1 '$BASE_DIR/run_batch_cli.sh' $*"
 fi
 
-# Buscar entorno virtual
+# Find virtual environment
 if [ -f "$BASE_DIR/.venv/bin/python" ]; then
     VENV_PYTHON="$BASE_DIR/.venv/bin/python"
 elif [ -f "$BASE_DIR/venv/bin/python" ]; then
@@ -27,18 +27,18 @@ elif [ -f "$BASE_DIR/env/bin/python" ]; then
 fi
 
 if [ -z "$VENV_PYTHON" ]; then
-    echo "[ERROR] Entorno virtual no encontrado."
-    echo "Ejecute ./install_LoRAlab-Krea2.sh primero."
+    echo "[ERROR] Virtual environment not found."
+    echo "Run ./install_LoRAlab-Krea2.sh first."
     exit 1
 fi
 
-MODE="${1:-all}"  # Opciones: precache, train, all
+MODE="${1:-all}"  # Options: precache, train, all
 
-# Elegir entrenador según 'progressive' en train_settings.json, igual que hace el
-# botón Train de la UI. Sin esto, un proyecto progresivo lanzaba el entrenador
-# directo contra el directorio padre de la caché (que sólo tiene subdirs 512/,
-# 768/, 1024/), éste imprimía "caché vacía" y salía con código 0: un no-op
-# silencioso que el script reportaba como éxito.
+# Choose trainer based on 'progressive' in train_settings.json, just as the
+# UI's Train button does. Without this, a progressive project launched the direct
+# trainer against the cache parent directory (which only contains 512/, 768/,
+# 1024/ subdirs), which printed "empty cache" and exited with code 0: a silent
+# no-op that the script reported as success.
 TRAIN_SCRIPT="$BASE_DIR/scripts/python/2_train_lora_krea2.py"
 PROGRESSIVE="$("$VENV_PYTHON" -c "
 import json, sys
@@ -54,11 +54,11 @@ if [ -n "$PROGRESSIVE" ] && [ "$PROGRESSIVE" != "off" ] && [ "$PROGRESSIVE" != "
 fi
 
 echo "================================================================"
-echo "   KREA-2 LORA TRAINER - PROCESO POR LOTE ALTERNO (CLI LINUX)"
+echo "   KREA-2 LORA TRAINER - ALTERNATE BATCH PROCESS (CLI LINUX)"
 echo "================================================================"
-echo "Modo seleccionado: $MODE"
+echo "Selected mode: $MODE"
 echo "Python: $VENV_PYTHON"
-echo "Entrenador: $(basename "$TRAIN_SCRIPT") (progressive=$PROGRESSIVE)"
+echo "Trainer: $(basename "$TRAIN_SCRIPT") (progressive=$PROGRESSIVE)"
 echo "================================================================"
 echo ""
 
@@ -66,34 +66,34 @@ STATUS=0
 
 case "$MODE" in
     precache)
-        echo "[1/1] Ejecutando Pre-Caché..."
+        echo "[1/1] Running Pre-Cache..."
         "$VENV_PYTHON" "$BASE_DIR/scripts/python/1_pre_cache_krea2.py"
         STATUS=$?
         ;;
     train)
-        echo "[1/1] Ejecutando Entrenamiento LoRA..."
+        echo "[1/1] Running LoRA Training..."
         "$VENV_PYTHON" "$TRAIN_SCRIPT"
         STATUS=$?
         ;;
     all)
-        echo "[1/2] Paso 1: Ejecutando Pre-Caché..."
+        echo "[1/2] Step 1: Running Pre-Cache..."
         "$VENV_PYTHON" "$BASE_DIR/scripts/python/1_pre_cache_krea2.py"
 
         if [ $? -eq 0 ]; then
             echo ""
-            echo "[2/2] Paso 2: Ejecutando Entrenamiento LoRA..."
+            echo "[2/2] Step 2: Running LoRA Training..."
             "$VENV_PYTHON" "$TRAIN_SCRIPT"
             STATUS=$?
         else
-            echo "[ERROR] El Pre-Caché falló. Cancelando entrenamiento."
+            echo "[ERROR] Pre-Cache failed. Aborting training."
             exit 1
         fi
         ;;
     *)
-        echo "Uso: $0 [precache|train|all]"
-        echo "  precache : Ejecuta sólo 1_pre_cache_krea2.py"
-        echo "  train    : Ejecuta sólo 2_train_lora_krea2.py (o run_progressive.py)"
-        echo "  all      : Ejecuta ambos secuencialmente (por defecto)"
+        echo "Usage: $0 [precache|train|all]"
+        echo "  precache : Runs only 1_pre_cache_krea2.py"
+        echo "  train    : Runs only 2_train_lora_krea2.py (or run_progressive.py)"
+        echo "  all      : Runs both sequentially (default)"
         exit 1
         ;;
 esac
@@ -101,9 +101,9 @@ esac
 echo ""
 echo "================================================================"
 if [ $STATUS -eq 0 ]; then
-    echo "Proceso por lote finalizado."
+    echo "Batch process completed."
 else
-    echo "[ERROR] Proceso por lote finalizado con código $STATUS."
+    echo "[ERROR] Batch process exited with code $STATUS."
 fi
 echo "================================================================"
 exit $STATUS
